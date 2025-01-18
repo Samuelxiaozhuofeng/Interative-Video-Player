@@ -18,6 +18,13 @@ export interface AISettings {
   isConfigured: boolean;
 }
 
+export interface Position {
+  x: number;
+  y: number;
+}
+
+export type ExplanationDisplayType = 'modal' | 'floating';
+
 export interface VideoState {
   currentTime: number;
   duration: number;
@@ -28,4 +35,6 @@ export interface VideoState {
   wordExplanation: WordExplanation | null;
   aiSettings: AISettings;
   videoElement: HTMLVideoElement | null;
+  explanationDisplay: ExplanationDisplayType;
+  explanationPosition: Position | null;
 }

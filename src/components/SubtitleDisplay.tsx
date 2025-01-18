@@ -4,21 +4,65 @@ import useAnkiStore from '../store/ankiStore';
 import { getWordExplanation } from '../services/aiService';
 import { Brain } from 'lucide-react';
 import ExplanationModal from './ExplanationModal';
+import FloatingCard from './FloatingCard';
 import { addNoteWithMedia } from '../services/ankiConnect';
 import { CardContent } from '../types/card';
 import { extractAudioFromVideo, captureVideoFrame } from '../utils/mediaUtils';
 
+interface PreparedMedia {
+  audioBlob: Blob;
+  imageBlob: Blob;
+}
+
 const SubtitleDisplay: React.FC = () => {
-  const { currentTime, subtitles, selectedWord, wordExplanation, setVideoState, aiSettings, videoElement } = useVideoStore();
+  const { 
+    currentTime, 
+    subtitles, 
+    selectedWord, 
+    wordExplanation, 
+    explanationDisplay,
+    explanationPosition,
+    setVideoState, 
+    aiSettings, 
+    videoElement,
+    isPlaying
+  } = useVideoStore();
   const { isConnected: isAnkiConnected, deckName, modelName, fieldMapping } = useAnkiStore();
   const [isLoading, setIsLoading] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [preparedMedia, setPreparedMedia] = useState<PreparedMedia | null>(null);
 
   const currentSubtitles = subtitles.filter(
     sub => currentTime >= sub.startTime && currentTime <= sub.endTime
   );
 
-  const handleWordClick = async (word: string) => {
+  // 准备媒体文件的函数
+  const prepareMedia = async (subtitle: { startTime: number; endTime: number }) => {
+    if (!videoElement) return null;
+    
+    try {
+      // 并行处理音频提取和视频截图
+      const [audioBlob, imageBlob] = await Promise.all([
+        extractAudioFromVideo(
+          videoElement,
+          subtitle.startTime,
+          subtitle.endTime
+        ),
+        captureVideoFrame(videoElement)
+      ]);
+
+      return { audioBlob, imageBlob };
+    } catch (error) {
+      console.error('准备媒体文件失败:', error);
+      return null;
+    }
+  };
+
+  const handleWordClick = async (event: React.MouseEvent, word: string) => {
+    if (isPlaying) {
+      setVideoState({ isPlaying: false });
+      videoElement?.pause();
+    }
+
     if (!aiSettings.isConfigured) {
       setVideoState({
         selectedWord: word,
@@ -31,18 +75,57 @@ const SubtitleDisplay: React.FC = () => {
       return;
     }
 
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const position = {
+      x: rect.left,
+      y: rect.bottom + window.scrollY
+    };
+
     setIsLoading(true);
-    setVideoState({ selectedWord: word });
+    setVideoState({ 
+      selectedWord: word,
+      explanationPosition: position
+    });
 
-    const context = currentSubtitles.map(sub => sub.text).join(' ');
+    const currentSubtitle = currentSubtitles[0];
+    if (currentSubtitle) {
+      // 开始准备媒体文件
+      const mediaPromise = prepareMedia(currentSubtitle);
+      
+      // 同时获取AI解释
+      const context = currentSubtitles.map(sub => sub.text).join(' ');
+      const explanationPromise = getWordExplanation(word, context, aiSettings);
 
-    try {
-      const explanation = await getWordExplanation(word, context, aiSettings);
-      setVideoState({ wordExplanation: explanation });
-      setIsModalOpen(true);
-    } finally {
-      setIsLoading(false);
+      try {
+        // 等待两个任务都完成
+        const [media, explanation] = await Promise.all([
+          mediaPromise,
+          explanationPromise
+        ]);
+
+        if (media) {
+          setPreparedMedia(media);
+        }
+        setVideoState({ wordExplanation: explanation });
+      } catch (error) {
+        console.error('处理失败:', error);
+      } finally {
+        setIsLoading(false);
+      }
     }
+  };
+
+  const handleCloseExplanation = () => {
+    setVideoState({ 
+      selectedWord: null, 
+      wordExplanation: null,
+      explanationPosition: null 
+    });
+    // 清理准备好的媒体文件
+    setPreparedMedia(null);
+    // 继续播放视频
+    setVideoState({ isPlaying: true });
+    videoElement?.play();
   };
 
   const handleAddToAnki = async (content: CardContent) => {
@@ -55,36 +138,46 @@ const SubtitleDisplay: React.FC = () => {
     }
 
     try {
-      // 获取当前字幕的时间范围
       const currentSubtitle = currentSubtitles[0];
       if (!currentSubtitle) {
         throw new Error('未找到当前字幕');
       }
 
-      // 提取音频
-      const audioBlob = await extractAudioFromVideo(
-        videoElement,
-        currentSubtitle.startTime,
-        currentSubtitle.endTime
-      );
+      let mediaContent: PreparedMedia;
+      if (preparedMedia) {
+        // 使用已准备好的媒体文件
+        mediaContent = preparedMedia;
+      } else {
+        // 如果没有准备好的媒体文件（异常情况），重新获取
+        const audioBlob = await extractAudioFromVideo(
+          videoElement,
+          currentSubtitle.startTime,
+          currentSubtitle.endTime
+        );
+        const imageBlob = await captureVideoFrame(videoElement);
+        mediaContent = { audioBlob, imageBlob };
+      }
 
-      // 捕获当前视频帧
-      const imageBlob = await captureVideoFrame(videoElement);
-
-      // 添加音频和图片到内容中
       const contentWithMedia: CardContent = {
         ...content,
-        audioBlob,
-        imageBlob
+        audioBlob: mediaContent.audioBlob,
+        imageBlob: mediaContent.imageBlob
       };
 
-      // 添加到 Anki
       await addNoteWithMedia(
         deckName,
         modelName,
         contentWithMedia,
         fieldMapping
       );
+
+      // 添加成功后清理媒体文件
+      setPreparedMedia(null);
+      
+      // 继续播放视频并关闭解释
+      setVideoState({ isPlaying: true });
+      videoElement?.play();
+      handleCloseExplanation();
     } catch (error) {
       console.error('添加到 Anki 失败:', error);
       throw error;
@@ -99,46 +192,55 @@ const SubtitleDisplay: React.FC = () => {
             <p key={subtitle.id} className="mb-2">
               {subtitle.text.split(' ').map((word, wordIndex) => (
                 <span
-                  key={wordIndex}
-                  onClick={() => handleWordClick(word)}
-                  className={`cursor-pointer transition-colors px-1 rounded ${
-                    selectedWord === word 
-                      ? 'bg-indigo-600 hover:bg-indigo-700' 
-                      : 'hover:text-blue-400'
+                  key={`${subtitle.id}-${wordIndex}`}
+                  className={`cursor-pointer hover:text-blue-400 ${
+                    selectedWord === word ? 'text-blue-400' : ''
                   }`}
+                  onClick={(e) => handleWordClick(e, word)}
                 >
-                  {word}
+                  {word}{' '}
                 </span>
               ))}
             </p>
           ))}
         </div>
-
-        {isLoading && (
-          <div className="flex items-center justify-center p-4 bg-gray-700/50 rounded-lg">
-            <Brain className="w-6 h-6 text-indigo-400 animate-pulse" />
-            <span className="ml-2 text-white">正在分析中...</span>
-          </div>
-        )}
-
-        {wordExplanation && (
-          <ExplanationModal
-            isOpen={isModalOpen}
-            onClose={() => setIsModalOpen(false)}
-            content={{
-              word: wordExplanation.word,
-              sentence: currentSubtitles[0]?.text || '',
-              explanation: wordExplanation.explanation,
-              timestamp: {
-                start: currentTime,
-                end: currentTime + 5
-              }
-            }}
-            onAddToAnki={handleAddToAnki}
-            isAnkiConnected={isAnkiConnected}
-          />
-        )}
       </div>
+
+      {wordExplanation && explanationPosition && explanationDisplay === 'floating' && (
+        <FloatingCard
+          content={{
+            word: wordExplanation.word,
+            sentence: currentSubtitles[0]?.text || '',
+            explanation: wordExplanation.explanation,
+            timestamp: {
+              start: currentSubtitles[0]?.startTime || 0,
+              end: currentSubtitles[0]?.endTime || 0
+            }
+          }}
+          position={explanationPosition}
+          onClose={handleCloseExplanation}
+          onAddToAnki={isAnkiConnected ? handleAddToAnki : undefined}
+          isAnkiConnected={isAnkiConnected}
+        />
+      )}
+
+      {wordExplanation && explanationDisplay === 'modal' && (
+        <ExplanationModal
+          isOpen={!!wordExplanation}
+          onClose={handleCloseExplanation}
+          content={{
+            word: wordExplanation.word,
+            sentence: currentSubtitles[0]?.text || '',
+            explanation: wordExplanation.explanation,
+            timestamp: {
+              start: currentSubtitles[0]?.startTime || 0,
+              end: currentSubtitles[0]?.endTime || 0
+            }
+          }}
+          onAddToAnki={handleAddToAnki}
+          isAnkiConnected={isAnkiConnected}
+        />
+      )}
     </div>
   );
 };

@@ -17,6 +17,8 @@ const useVideoStore = create<VideoStore>()(
       selectedWord: null,
       wordExplanation: null,
       videoElement: null,
+      explanationDisplay: 'floating',
+      explanationPosition: null,
       aiSettings: {
         apiKey: '',
         apiEndpoint: '',
@@ -36,6 +38,7 @@ const useVideoStore = create<VideoStore>()(
         selectedWord: state.selectedWord,
         wordExplanation: state.wordExplanation,
         aiSettings: state.aiSettings,
+        explanationDisplay: state.explanationDisplay,
       }),
     }
   )
