@@ -40,7 +40,6 @@ const SubtitleDisplay: React.FC = () => {
     if (!videoElement) return null;
     
     try {
-      // 并行处理音频提取和视频截图
       const [audioBlob, imageBlob] = await Promise.all([
         extractAudioFromVideo(
           videoElement,
@@ -57,73 +56,13 @@ const SubtitleDisplay: React.FC = () => {
     }
   };
 
-  const handleWordClick = async (event: React.MouseEvent, word: string) => {
-    if (isPlaying) {
-      setVideoState({ isPlaying: false });
-      videoElement?.pause();
-    }
-
-    if (!aiSettings.isConfigured) {
-      setVideoState({
-        selectedWord: word,
-        wordExplanation: {
-          word,
-          explanation: '请先配置AI设置',
-          examples: ['点击右下角的设置图标来配置AI']
-        }
-      });
-      return;
-    }
-
-    const rect = (event.target as HTMLElement).getBoundingClientRect();
-    const position = {
-      x: rect.left,
-      y: rect.bottom + window.scrollY
-    };
-
-    setIsLoading(true);
-    setVideoState({ 
-      selectedWord: word,
-      explanationPosition: position
-    });
-
-    const currentSubtitle = currentSubtitles[0];
-    if (currentSubtitle) {
-      // 开始准备媒体文件
-      const mediaPromise = prepareMedia(currentSubtitle);
-      
-      // 同时获取AI解释
-      const context = currentSubtitles.map(sub => sub.text).join(' ');
-      const explanationPromise = getWordExplanation(word, context, aiSettings);
-
-      try {
-        // 等待两个任务都完成
-        const [media, explanation] = await Promise.all([
-          mediaPromise,
-          explanationPromise
-        ]);
-
-        if (media) {
-          setPreparedMedia(media);
-        }
-        setVideoState({ wordExplanation: explanation });
-      } catch (error) {
-        console.error('处理失败:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
-
   const handleCloseExplanation = () => {
     setVideoState({ 
       selectedWord: null, 
       wordExplanation: null,
       explanationPosition: null 
     });
-    // 清理准备好的媒体文件
     setPreparedMedia(null);
-    // 继续播放视频
     setVideoState({ isPlaying: true });
     videoElement?.play();
   };
@@ -145,10 +84,8 @@ const SubtitleDisplay: React.FC = () => {
 
       let mediaContent: PreparedMedia;
       if (preparedMedia) {
-        // 使用已准备好的媒体文件
         mediaContent = preparedMedia;
       } else {
-        // 如果没有准备好的媒体文件（异常情况），重新获取
         const audioBlob = await extractAudioFromVideo(
           videoElement,
           currentSubtitle.startTime,
@@ -171,10 +108,7 @@ const SubtitleDisplay: React.FC = () => {
         fieldMapping
       );
 
-      // 添加成功后清理媒体文件
       setPreparedMedia(null);
-      
-      // 继续播放视频并关闭解释
       setVideoState({ isPlaying: true });
       videoElement?.play();
       handleCloseExplanation();
@@ -185,27 +119,7 @@ const SubtitleDisplay: React.FC = () => {
   };
 
   return (
-    <div className="mt-6">
-      <div className="bg-gray-800 rounded-lg p-4">
-        <div className="text-white text-lg mb-4">
-          {currentSubtitles.map((subtitle, index) => (
-            <p key={subtitle.id} className="mb-2">
-              {subtitle.text.split(' ').map((word, wordIndex) => (
-                <span
-                  key={`${subtitle.id}-${wordIndex}`}
-                  className={`cursor-pointer hover:text-blue-400 ${
-                    selectedWord === word ? 'text-blue-400' : ''
-                  }`}
-                  onClick={(e) => handleWordClick(e, word)}
-                >
-                  {word}{' '}
-                </span>
-              ))}
-            </p>
-          ))}
-        </div>
-      </div>
-
+    <>
       {wordExplanation && explanationPosition && explanationDisplay === 'floating' && (
         <FloatingCard
           content={{
@@ -241,7 +155,7 @@ const SubtitleDisplay: React.FC = () => {
           isAnkiConnected={isAnkiConnected}
         />
       )}
-    </div>
+    </>
   );
 };
 
