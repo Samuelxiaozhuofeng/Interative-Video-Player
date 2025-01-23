@@ -25,6 +25,11 @@ export interface Position {
 
 export type ExplanationDisplayType = 'modal' | 'floating';
 
+export interface YoutubeSettings {
+  apiKey: string;
+  enableCORSProxy: boolean;
+}
+
 export interface VideoState {
   currentTime: number;
   duration: number;
@@ -37,4 +42,9 @@ export interface VideoState {
   videoElement: HTMLVideoElement | null;
   explanationDisplay: ExplanationDisplayType;
   explanationPosition: Position | null;
+  videoSourceType: 'local' | 'youtube';
+  youtubeVideoId: string | null;
+  youtubeCaptions: Subtitle[];
+  youtubePlayer: YT.Player | null;
+  youtubeSettings: YoutubeSettings;
 }

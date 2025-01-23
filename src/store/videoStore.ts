@@ -25,7 +25,23 @@ const useVideoStore = create<VideoStore>()(
         model: 'gpt-3.5-turbo',
         isConfigured: false,
       },
+      videoSourceType: 'local',
+      youtubeVideoId: null,
+      youtubeCaptions: [],
+      youtubePlayer: null,
+      youtubeSettings: {
+        apiKey: '',
+        enableCORSProxy: false,
+      },
       setVideoState: (state) => set(state),
+      setYoutubeVideoId: (videoId: string) => set({ youtubeVideoId: videoId }),
+      setYoutubePlayer: (player: YT.Player | null) => set({ youtubePlayer: player }),
+      switchVideoSource: (sourceType: 'local' | 'youtube') => {
+        set({ videoSourceType: sourceType });
+        if (sourceType === 'local') {
+          set({ youtubeVideoId: null, youtubeCaptions: [] });
+        }
+      },
     }),
     {
       name: 'video-storage',
@@ -39,6 +55,8 @@ const useVideoStore = create<VideoStore>()(
         wordExplanation: state.wordExplanation,
         aiSettings: state.aiSettings,
         explanationDisplay: state.explanationDisplay,
+        videoSourceType: state.videoSourceType,
+        youtubeSettings: state.youtubeSettings,
       }),
     }
   )

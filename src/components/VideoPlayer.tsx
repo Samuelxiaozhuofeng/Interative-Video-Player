@@ -1,8 +1,9 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { Play, Pause, Volume2, Maximize, Minimize } from 'lucide-react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { Play, Pause, Volume2, Maximize, Minimize, Youtube } from 'lucide-react';
 import useVideoStore from '../store/videoStore';
 import { getWordExplanation } from '../services/aiService';
 import { extractAudioFromVideo, captureVideoFrame } from '../utils/mediaUtils';
+import Html5Player from './players/Html5Player';
 
 interface PreparedMedia {
   audioBlob: Blob;
@@ -12,6 +13,12 @@ interface PreparedMedia {
 const VideoPlayer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const player = useMemo(() => {
+    if (videoRef.current) {
+      return new Html5Player(videoRef);
+    }
+    return null;
+  }, []);
   const { 
     currentTime, 
     duration, 
@@ -25,34 +32,41 @@ const VideoPlayer: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [preparedMedia, setPreparedMedia] = useState<PreparedMedia | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showYoutubeInput, setShowYoutubeInput] = useState(false);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [playerType, setPlayerType] = useState<'html5' | 'youtube'>('html5');
 
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.volume = volume;
+    if (player) {
+      player.setVolume(volume);
     }
-  }, [volume]);
+  }, [player, volume]);
 
   useEffect(() => {
-    if (videoRef.current) {
-      setVideoState({ videoElement: videoRef.current });
+    if (player) {
+      setVideoState({ videoElement: player.getVideoElement().current });
     }
     return () => {
       setVideoState({ videoElement: null });
     };
-  }, [setVideoState]);
+  }, [player, setVideoState]);
 
   const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setVideoState({ currentTime: videoRef.current.currentTime });
+    if (player) {
+      const state = player.getState();
+      setVideoState({
+        currentTime: state.currentTime,
+        duration: state.duration
+      });
     }
   };
 
-  const togglePlay = () => {
-    if (videoRef.current) {
+  const togglePlay = async () => {
+    if (player) {
       if (isPlaying) {
-        videoRef.current.pause();
+        player.pause();
       } else {
-        videoRef.current.play();
+        await player.play();
       }
       setVideoState({ isPlaying: !isPlaying });
     }
@@ -60,6 +74,9 @@ const VideoPlayer: React.FC = () => {
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseFloat(e.target.value);
+    if (player) {
+      player.setVolume(newVolume);
+    }
     setVideoState({ volume: newVolume });
   };
 
@@ -75,8 +92,8 @@ const VideoPlayer: React.FC = () => {
 
   const handleWordClick = async (event: React.MouseEvent, word: string) => {
     event.preventDefault();
-    if (isPlaying) {
-      videoRef.current?.pause();
+    if (isPlaying && player) {
+      player.pause();
       setVideoState({ isPlaying: false });
     }
 
@@ -127,16 +144,19 @@ const VideoPlayer: React.FC = () => {
   };
 
   const prepareMedia = async (subtitle: { startTime: number; endTime: number }) => {
-    if (!videoRef.current) return null;
+    if (!player) return null;
     
     try {
+      const videoElement = player.getVideoElement().current;
+      if (!videoElement) return null;
+
       const [audioBlob, imageBlob] = await Promise.all([
         extractAudioFromVideo(
-          videoRef.current,
+          videoElement,
           subtitle.startTime,
           subtitle.endTime
         ),
-        captureVideoFrame(videoRef.current)
+        captureVideoFrame(videoElement)
       ]);
 
       return { audioBlob, imageBlob };
@@ -182,8 +202,9 @@ const VideoPlayer: React.FC = () => {
         className="w-full aspect-video"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={() => {
-          if (videoRef.current) {
-            setVideoState({ duration: videoRef.current.duration });
+          if (player) {
+            const state = player.getState();
+            setVideoState({ duration: state.duration });
           }
         }}
       />
@@ -225,6 +246,9 @@ const VideoPlayer: React.FC = () => {
             <span>{formatTime(currentTime)}</span>
             <span>/</span>
             <span>{formatTime(duration)}</span>
+            <span className="ml-2 text-sm text-gray-400">
+              {playerType === 'youtube' ? 'YouTube' : '本地'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
@@ -239,12 +263,91 @@ const VideoPlayer: React.FC = () => {
               className="w-24"
             />
             <button
+              onClick={() => {
+                if (playerType === 'html5') {
+                  setShowYoutubeInput(true);
+                } else {
+                  setPlayerType('html5');
+                  if (player) {
+                    player.getVideoElement().current?.removeAttribute('src');
+                  }
+                }
+              }}
+              className={`p-2 rounded-full hover:bg-gray-700 ${
+                playerType === 'youtube' ? 'text-red-600' : 'text-white'
+              }`}
+            >
+              <Youtube size={20} />
+            </button>
+            <button
               onClick={toggleFullscreen}
               className="p-2 rounded-full hover:bg-gray-700 text-white"
             >
               {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
             </button>
           </div>
+    
+          {showYoutubeInput && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-gray-800 p-6 rounded-lg w-96">
+                <h2 className="text-xl font-bold mb-4">输入YouTube链接</h2>
+                <input
+                  type="text"
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="w-full p-2 rounded bg-gray-700 mb-4"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowYoutubeInput(false)}
+                    className="px-4 py-2 rounded hover:bg-gray-700"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        // 验证YouTube链接
+                        const url = new URL(youtubeUrl);
+                        if (!url.hostname.includes('youtube.com') && !url.hostname.includes('youtu.be')) {
+                          alert('请输入有效的YouTube链接');
+                          return;
+                        }
+    
+                        // 提取视频ID
+                        const videoId = url.searchParams.get('v') || url.pathname.split('/').pop();
+                        if (!videoId) {
+                          alert('无法解析视频ID');
+                          return;
+                        }
+    
+                        // 切换播放器类型
+                        setPlayerType('youtube');
+                        
+                        // 更新视频源
+                        if (player) {
+                          const videoElement = player.getVideoElement().current;
+                          if (videoElement) {
+                            videoElement.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+                            await player.play();
+                          }
+                        }
+    
+                        setShowYoutubeInput(false);
+                      } catch (error) {
+                        console.error('YouTube链接处理失败:', error);
+                        alert('YouTube链接处理失败，请检查链接格式');
+                      }
+                    }}
+                    className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700"
+                  >
+                    确定
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-2">
@@ -254,9 +357,9 @@ const VideoPlayer: React.FC = () => {
             max={duration}
             value={currentTime}
             onChange={(e) => {
-              if (videoRef.current) {
+              if (player) {
                 const time = parseFloat(e.target.value);
-                videoRef.current.currentTime = time;
+                player.seekTo(time);
                 setVideoState({ currentTime: time });
               }
             }}
